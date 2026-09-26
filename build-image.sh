@@ -31,7 +31,7 @@ EOF
 cp /etc/resolv.conf "$ROOTFS/etc/resolv.conf"
 
 chroot "$ROOTFS" apt-get update
-chroot "$ROOTFS" apt-get install -y --no-install-recommends linux-image-amd64 grub-pc-bin grub-common systemd systemd-sysv dbus dbus-x11 sudo xorg xinit x11-xserver-utils openbox xterm firefox-esr network-manager network-manager-gnome ca-certificates curl fonts-dejavu fonts-noto-core locales
+chroot "$ROOTFS" apt-get install -y --no-install-recommends linux-image-amd64 grub-pc-bin grub-common passwd login systemd systemd-sysv dbus dbus-x11 sudo xorg xinit x11-xserver-utils openbox xterm firefox-esr network-manager network-manager-gnome ca-certificates curl fonts-dejavu fonts-noto-core locales
 
 chroot "$ROOTFS" bash -c 'echo "en_US.UTF-8 UTF-8" > /etc/locale.gen && locale-gen'
 chroot "$ROOTFS" bash -c 'echo "yousef-browser-os" > /etc/hostname'

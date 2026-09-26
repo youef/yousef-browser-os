@@ -31,7 +31,7 @@ EOF
 cp /etc/resolv.conf "$ROOTFS/etc/resolv.conf"
 
 chroot "$ROOTFS" apt-get update
-chroot "$ROOTFS" apt-get install -y --no-install-recommends   linux-image-amd64   grub-pc-bin grub-common   systemd systemd-sysv dbus dbus-x11   sudo xorg xinit x11-xserver-utils   openbox xterm firefox-esr   network-manager network-manager-gnome   ca-certificates curl   fonts-dejavu fonts-noto-core locales
+chroot "$ROOTFS" apt-get install -y --no-install-recommends linux-image-amd64 grub-pc-bin grub-common systemd systemd-sysv dbus dbus-x11 sudo xorg xinit x11-xserver-utils openbox xterm firefox-esr network-manager network-manager-gnome ca-certificates curl fonts-dejavu fonts-noto-core locales
 
 chroot "$ROOTFS" bash -c 'echo "en_US.UTF-8 UTF-8" > /etc/locale.gen && locale-gen'
 chroot "$ROOTFS" bash -c 'echo "yousef-browser-os" > /etc/hostname'
@@ -41,7 +41,9 @@ cat > "$ROOTFS/etc/hosts" <<'EOF'
 ::1 localhost ip6-localhost ip6-loopback
 EOF
 
-chroot "$ROOTFS" bash -c 'useradd -m -s /bin/bash yousef || true'
+# Create the dedicated browser user explicitly and fail if it cannot be created.
+chroot "$ROOTFS" groupadd -f yousef
+chroot "$ROOTFS" useradd -m -d /home/yousef -g yousef -s /bin/bash yousef
 chroot "$ROOTFS" bash -c 'echo "yousef:yousef" | chpasswd'
 chroot "$ROOTFS" usermod -aG sudo yousef
 
@@ -116,7 +118,6 @@ cp -a "$ROOTFS"/. "$MNT"/
 mkdir -p "$MNT/boot/grub"
 chroot "$MNT" grub-install --target=i386-pc --boot-directory=/boot "$LOOP"
 chroot "$MNT" update-grub
-
 chroot "$MNT" bash -c 'printf "YOUSEF Browser OS\\n" > /etc/issue'
 sync
 umount "$MNT"

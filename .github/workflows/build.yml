@@ -11,7 +11,7 @@ permissions:
 jobs:
   build:
     runs-on: ubuntu-latest
-    timeout-minutes: 45
+    timeout-minutes: 90
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -23,13 +23,12 @@ jobs:
 
       - name: Validate image
         run: |
-          set -e
+          set -euxo pipefail
           test -f YOUSEF-Browser-OS.img
-          SIZE=$(stat -c%s YOUSEF-Browser-OS.img)
-          echo "IMG size: $SIZE bytes"
-          test "$SIZE" -gt 3000000000
+          test "$(stat -c%s YOUSEF-Browser-OS.img)" -eq 4294967296
           sudo fdisk -l YOUSEF-Browser-OS.img
-          sudo file YOUSEF-Browser-OS.img
+          file YOUSEF-Browser-OS.img
+          sudo dd if=YOUSEF-Browser-OS.img bs=512 count=1 status=none | od -An -tx1 | grep -q '55 aa'
 
       - name: Generate checksum
         run: sha256sum YOUSEF-Browser-OS.img > YOUSEF-Browser-OS.img.sha256
@@ -37,7 +36,7 @@ jobs:
       - name: Upload IMG artifact
         uses: actions/upload-artifact@v4
         with:
-          name: YOUSEF-Browser-OS-x86_64
+          name: YOUSEF-Browser-OS-x86_64-${{ github.run_number }}
           path: |
             YOUSEF-Browser-OS.img
             YOUSEF-Browser-OS.img.sha256
@@ -45,16 +44,15 @@ jobs:
           compression-level: 0
 
       - name: Create release
+        if: github.event_name == 'workflow_dispatch'
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: v1.0.0
-          name: YOUSEF Browser OS v1.0.0
-          body: |
-            Clean first release for UTM SE.
-            x86_64 / BIOS / 4 GB RAW IMG / Firefox ESR kiosk.
+          tag_name: build-${{ github.run_number }}
+          name: YOUSEF Browser OS build ${{ github.run_number }}
+          body: x86_64 BIOS raw IMG for UTM SE; Firefox ESR kiosk mode.
           files: |
             YOUSEF-Browser-OS.img
             YOUSEF-Browser-OS.img.sha256
-          make_latest: true
+          make_latest: false
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

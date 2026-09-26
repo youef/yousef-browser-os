@@ -1,70 +1,84 @@
 #!/usr/bin/env bash
-set -euo pipefail
+set -Eeuo pipefail
 
 IMAGE="${IMAGE:-YOUSEF-Browser-OS.img}"
 SIZE_MB="${SIZE_MB:-4096}"
-ROOTFS="/tmp/yousef-rootfs"
-MNT="/tmp/yousef-mnt"
+ROOTFS="$(mktemp -d /tmp/yousef-rootfs.XXXXXX)"
+MNT="$(mktemp -d /tmp/yousef-mnt.XXXXXX)"
+LOOP=""
 
 export DEBIAN_FRONTEND=noninteractive
+cleanup() {
+  set +e
+  sync
+  mountpoint -q "$MNT" && umount -R "$MNT"
+  [ -n "$LOOP" ] && losetup -d "$LOOP"
+  mountpoint -q "$ROOTFS/run" && umount -R "$ROOTFS/run"
+  mountpoint -q "$ROOTFS/sys" && umount -R "$ROOTFS/sys"
+  mountpoint -q "$ROOTFS/proc" && umount -R "$ROOTFS/proc"
+  mountpoint -q "$ROOTFS/dev/pts" && umount -R "$ROOTFS/dev/pts"
+  mountpoint -q "$ROOTFS/dev" && umount -R "$ROOTFS/dev"
+  rm -rf "$ROOTFS" "$MNT"
+}
+trap cleanup EXIT
 
-rm -rf "$ROOTFS" "$MNT" "$IMAGE"
-mkdir -p "$ROOTFS" "$MNT"
-
+rm -f "$IMAGE"
 apt-get update
-apt-get install -y --no-install-recommends debootstrap parted e2fsprogs grub-pc-bin grub-common
+apt-get install -y --no-install-recommends \
+  debootstrap parted e2fsprogs dosfstools grub-pc-bin grub-common \
+  linux-image-amd64
 
-debootstrap --arch=amd64 --variant=minbase bookworm "$ROOTFS" http://deb.debian.org/debian
+debootstrap --arch=amd64 --variant=minbase bookworm "$ROOTFS" https://deb.debian.org/debian
 
-mount --bind /dev "$ROOTFS/dev"
-mount --bind /dev/pts "$ROOTFS/dev/pts"
-mount -t proc /proc "$ROOTFS/proc"
-mount -t sysfs /sys "$ROOTFS/sys"
+mkdir -p "$ROOTFS/dev/pts" "$ROOTFS/proc" "$ROOTFS/sys" "$ROOTFS/run"
+mount --rbind /dev "$ROOTFS/dev"
+mount --make-rslave "$ROOTFS/dev"
+mount -t proc proc "$ROOTFS/proc"
+mount -t sysfs sysfs "$ROOTFS/sys"
 mount -t tmpfs tmpfs "$ROOTFS/run"
+cp -L /etc/resolv.conf "$ROOTFS/etc/resolv.conf"
 
 cat > "$ROOTFS/etc/apt/sources.list" <<'EOF'
-deb http://deb.debian.org/debian bookworm main contrib non-free-firmware
-deb http://deb.debian.org/debian bookworm-updates main contrib non-free-firmware
-deb http://security.debian.org/debian-security bookworm-security main contrib non-free-firmware
+deb https://deb.debian.org/debian bookworm main contrib non-free-firmware
+deb https://deb.debian.org/debian bookworm-updates main contrib non-free-firmware
+deb https://security.debian.org/debian-security bookworm-security main contrib non-free-firmware
 EOF
 
-cp /etc/resolv.conf "$ROOTFS/etc/resolv.conf"
-
 chroot "$ROOTFS" apt-get update
-chroot "$ROOTFS" apt-get install -y --no-install-recommends linux-image-amd64 grub-pc-bin grub-common passwd login systemd systemd-sysv dbus dbus-x11 sudo xorg xinit x11-xserver-utils openbox xterm firefox-esr network-manager network-manager-gnome ca-certificates curl fonts-dejavu fonts-noto-core locales
+chroot "$ROOTFS" apt-get install -y --no-install-recommends \
+  linux-image-amd64 grub-pc-bin grub-common systemd systemd-sysv dbus dbus-x11 \
+  network-manager sudo passwd login locales ca-certificates xorg xinit \
+  x11-xserver-utils openbox firefox-esr
 
-chroot "$ROOTFS" bash -c 'echo "en_US.UTF-8 UTF-8" > /etc/locale.gen && locale-gen'
-chroot "$ROOTFS" bash -c 'echo "yousef-browser-os" > /etc/hostname'
+# Create the account with explicit checks; do not rely on adduser defaults in a chroot.
+chroot "$ROOTFS" groupadd --system yousef
+chroot "$ROOTFS" useradd --create-home --home-dir /home/yousef --gid yousef --shell /bin/bash yousef
+chroot "$ROOTFS" bash -c 'id yousef && echo "yousef:yousef" | chpasswd && usermod -aG sudo yousef'
+
+chroot "$ROOTFS" bash -c 'printf "en_US.UTF-8 UTF-8\n" > /etc/locale.gen; locale-gen'
+printf 'yousef-browser-os\n' > "$ROOTFS/etc/hostname"
 cat > "$ROOTFS/etc/hosts" <<'EOF'
 127.0.0.1 localhost
 127.0.1.1 yousef-browser-os
 ::1 localhost ip6-localhost ip6-loopback
 EOF
 
-# Create the dedicated browser user explicitly and fail if it cannot be created.
-chroot "$ROOTFS" groupadd -f yousef
-chroot "$ROOTFS" useradd -m -d /home/yousef -g yousef -s /bin/bash yousef
-chroot "$ROOTFS" bash -c 'echo "yousef:yousef" | chpasswd'
-chroot "$ROOTFS" usermod -aG sudo yousef
-
-mkdir -p "$ROOTFS/home/yousef/.config/openbox" "$ROOTFS/etc/systemd/system"
-
+install -d -o yousef -g yousef "$ROOTFS/home/yousef/.config/openbox"
 cat > "$ROOTFS/home/yousef/.xinitrc" <<'EOF'
 #!/bin/sh
-xsetroot -solid black
+xsetroot -solid '#101820'
 exec openbox-session
 EOF
-chmod +x "$ROOTFS/home/yousef/.xinitrc"
-
 cat > "$ROOTFS/home/yousef/.config/openbox/autostart" <<'EOF'
-(sleep 4; firefox-esr --kiosk --private-window "https://www.google.com") &
+(sleep 3; exec firefox-esr --kiosk --private-window 'https://www.google.com') &
 EOF
-chown -R yousef:yousef "$ROOTFS/home/yousef"
+chmod +x "$ROOTFS/home/yousef/.xinitrc"
+chroot "$ROOTFS" chown -R yousef:yousef /home/yousef
 
 cat > "$ROOTFS/etc/systemd/system/browser-session.service" <<'EOF'
 [Unit]
 Description=YOUSEF Browser OS graphical browser session
-After=network-online.target
+After=network-online.target systemd-user-sessions.service
 Wants=network-online.target
 Conflicts=getty@tty1.service
 
@@ -74,9 +88,6 @@ WorkingDirectory=/home/yousef
 Environment=HOME=/home/yousef
 Environment=DISPLAY=:0
 TTYPath=/dev/tty1
-TTYReset=yes
-TTYVHangup=yes
-TTYVTDisallocate=yes
 StandardInput=tty
 StandardOutput=journal
 StandardError=journal
@@ -87,41 +98,28 @@ RestartSec=3
 [Install]
 WantedBy=graphical.target
 EOF
-
-chroot "$ROOTFS" systemctl enable NetworkManager.service || true
-chroot "$ROOTFS" systemctl enable browser-session.service || true
-chroot "$ROOTFS" systemd-machine-id-setup || true
+chroot "$ROOTFS" systemctl enable NetworkManager.service
+chroot "$ROOTFS" systemctl enable browser-session.service
+chroot "$ROOTFS" systemd-machine-id-setup
 rm -f "$ROOTFS/etc/machine-id"
 
 truncate -s "${SIZE_MB}M" "$IMAGE"
 parted -s "$IMAGE" mklabel msdos
 parted -s "$IMAGE" mkpart primary ext4 1MiB 100%
 parted -s "$IMAGE" set 1 boot on
-
 LOOP="$(losetup --find --show --partscan "$IMAGE")"
-cleanup() {
-  set +e
-  umount -R "$ROOTFS/run" 2>/dev/null || true
-  umount -R "$ROOTFS/sys" 2>/dev/null || true
-  umount -R "$ROOTFS/proc" 2>/dev/null || true
-  umount -R "$ROOTFS/dev/pts" 2>/dev/null || true
-  umount -R "$ROOTFS/dev" 2>/dev/null || true
-  umount "$MNT" 2>/dev/null || true
-  losetup -d "$LOOP" 2>/dev/null || true
-}
-trap cleanup EXIT
-
+udevadm settle
 mkfs.ext4 -F -L YOUSEF_OS "${LOOP}p1"
 mount "${LOOP}p1" "$MNT"
 cp -a "$ROOTFS"/. "$MNT"/
 
+# Install legacy BIOS GRUB into the image, not into the runner.
 mkdir -p "$MNT/boot/grub"
-chroot "$MNT" grub-install --target=i386-pc --boot-directory=/boot "$LOOP"
+grub-install --target=i386-pc --boot-directory="$MNT/boot" "$LOOP"
 chroot "$MNT" update-grub
-chroot "$MNT" bash -c 'printf "YOUSEF Browser OS\\n" > /etc/issue'
+printf 'YOUSEF Browser OS\n' > "$MNT/etc/issue"
 sync
 umount "$MNT"
 e2fsck -fy "${LOOP}p1"
-sync
 losetup -d "$LOOP"
-trap - EXIT
+LOOP=""

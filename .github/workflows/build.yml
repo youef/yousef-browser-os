@@ -1,0 +1,60 @@
+name: Build YOUSEF Browser OS
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Build bootable image
+        run: |
+          chmod +x build-image.sh
+          sudo ./build-image.sh
+
+      - name: Validate image
+        run: |
+          set -e
+          test -f YOUSEF-Browser-OS.img
+          SIZE=$(stat -c%s YOUSEF-Browser-OS.img)
+          echo "IMG size: $SIZE bytes"
+          test "$SIZE" -gt 3000000000
+          sudo fdisk -l YOUSEF-Browser-OS.img
+          sudo file YOUSEF-Browser-OS.img
+
+      - name: Generate checksum
+        run: sha256sum YOUSEF-Browser-OS.img > YOUSEF-Browser-OS.img.sha256
+
+      - name: Upload IMG artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: YOUSEF-Browser-OS-x86_64
+          path: |
+            YOUSEF-Browser-OS.img
+            YOUSEF-Browser-OS.img.sha256
+          retention-days: 30
+          compression-level: 0
+
+      - name: Create release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: v1.0.0
+          name: YOUSEF Browser OS v1.0.0
+          body: |
+            Clean first release for UTM SE.
+            x86_64 / BIOS / 4 GB RAW IMG / Firefox ESR kiosk.
+          files: |
+            YOUSEF-Browser-OS.img
+            YOUSEF-Browser-OS.img.sha256
+          make_latest: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
